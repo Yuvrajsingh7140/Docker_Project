@@ -1,1 +1,1 @@
-printtgc("Hey There (Updated Once Again)")
+print("Hey There (Updated Once Again) after correcting")
