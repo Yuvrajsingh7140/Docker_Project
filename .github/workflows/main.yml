@@ -1,56 +1,52 @@
-name: CI/CD - Docker Image Verification
+name: CI/CD Pipeline
 
 on:
   push:
-    branches:
-      - main
-      - develop
+    branches: [ main ]
   pull_request:
-    branches:
-      - main
+    branches: [ main ]
 
 env:
+  REGISTRY: ghcr.io
   IMAGE_NAME: python-app
-  REGISTRY: ghcr.io  # Change to docker.io if using Docker Hub
-  PORT: 5000
 
 jobs:
-  build-and-verify:
+  build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout code
+    - name: Checkout repository
       uses: actions/checkout@v3
 
-    - name: Log in to container registry
-      if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
+    - name: Set lowercase repository name
+      run: echo "REPO_LOWERCASE=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to GitHub Container Registry
       uses: docker/login-action@v3
       with:
         registry: ghcr.io
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
-
     - name: Build Docker image
       run: |
-        docker build -t $REGISTRY/${{ github.repository }}:$GITHUB_SHA .
+        docker build -t $REGISTRY/${REPO_LOWERCASE}:$GITHUB_SHA .
 
-    - name: Run container and test health
+    - name: Run container to test health
       run: |
-        docker run -d --name test-app -p 5000:5000 $REGISTRY/${{ github.repository }}:$GITHUB_SHA
-        echo "Waiting for app to be healthy..."
+        docker run -d --name test-app -p 5000:5000 $REGISTRY/${REPO_LOWERCASE}:$GITHUB_SHA
+        echo "Waiting for app to become healthy..."
         sleep 10
         curl --fail http://localhost:5000/api/health || (docker logs test-app && exit 1)
         docker stop test-app
+        docker rm test-app
 
-    - name: Push Docker image
-      if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
+    - name: Push Docker image to GHCR
       run: |
-        docker tag $REGISTRY/${{ github.repository }}:$GITHUB_SHA $REGISTRY/${{ github.repository }}:latest
-        docker push $REGISTRY/${{ github.repository }}:$GITHUB_SHA
-        docker push $REGISTRY/${{ github.repository }}:latest
+        docker tag $REGISTRY/${REPO_LOWERCASE}:$GITHUB_SHA $REGISTRY/${REPO_LOWERCASE}:latest
+        docker push $REGISTRY/${REPO_LOWERCASE}:$GITHUB_SHA
+        docker push $REGISTRY/${REPO_LOWERCASE}:latest
 
-    - name: Cleanup
-      run: docker system prune -f
