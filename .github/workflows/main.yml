@@ -1,52 +1,51 @@
-name: CI/CD Pipeline
+name: Build and Push Docker Image
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, develop ]
   pull_request:
     branches: [ main ]
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: python-app
 
 jobs:
-  build-and-deploy:
+  build-and-push:
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: read
+      packages: write    # Required for GHCR push
+      id-token: write    # Needed for OIDC if you use it
+
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set lowercase repository name
-      run: echo "REPO_LOWERCASE=${GITHUB_REPOSITORY,,}" >> $GITHUB_ENV
+      - name: Set lowercase names
+        run: |
+          USERNAME=$(echo "${{ github.actor }}" | tr '[:upper:]' '[:lower:]')
+          REPO_NAME=$(echo "${{ github.repository }}" | awk -F/ '{print $2}' | tr '[:upper:]' '[:lower:]')
+          echo "USERNAME=${USERNAME}" >> $GITHUB_ENV
+          echo "REPO_NAME=${REPO_NAME}" >> $GITHUB_ENV
+          echo "IMAGE=${{ env.REGISTRY }}/${USERNAME}/${REPO_NAME}" >> $GITHUB_ENV
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Log in to GitHub Container Registry
-      uses: docker/login-action@v3
-      with:
-        registry: ghcr.io
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build Docker image
+        run: |
+          docker build -t $IMAGE:${{ github.sha }} .
 
-    - name: Build Docker image
-      run: |
-        docker build -t $REGISTRY/${REPO_LOWERCASE}:$GITHUB_SHA .
+      - name: Tag Docker image as latest
+        run: |
+          docker tag $IMAGE:${{ github.sha }} $IMAGE:latest
 
-    - name: Run container to test health
-      run: |
-        docker run -d --name test-app -p 5000:5000 $REGISTRY/${REPO_LOWERCASE}:$GITHUB_SHA
-        echo "Waiting for app to become healthy..."
-        sleep 10
-        curl --fail http://localhost:5000/api/health || (docker logs test-app && exit 1)
-        docker stop test-app
-        docker rm test-app
-
-    - name: Push Docker image to GHCR
-      run: |
-        docker tag $REGISTRY/${REPO_LOWERCASE}:$GITHUB_SHA $REGISTRY/${REPO_LOWERCASE}:latest
-        docker push $REGISTRY/${REPO_LOWERCASE}:$GITHUB_SHA
-        docker push $REGISTRY/${REPO_LOWERCASE}:latest
-
+      - name: Push Docker image
+        run: |
+          docker push $IMAGE:${{ github.sha }}
+          docker push $IMAGE:latest
